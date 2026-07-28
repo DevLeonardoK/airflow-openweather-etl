@@ -1,0 +1,6 @@
+anotacao.txt
+venv
+config/.env
+data/*.json
+__pycache__/
+*.pyc
