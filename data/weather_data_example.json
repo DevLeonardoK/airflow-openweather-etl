@@ -1,0 +1,49 @@
+{
+    "coord": {
+        "lon": -51.1306,
+        "lat": -29.6783
+    },
+    "weather": [
+        {
+            "id": 500,
+            "main": "Rain",
+            "description": "light rain",
+            "icon": "10n"
+        }
+    ],
+    "base": "stations",
+    "main": {
+        "temp": 18.09,
+        "feels_like": 18.49,
+        "temp_min": 17.97,
+        "temp_max": 19.91,
+        "pressure": 1011,
+        "humidity": 97,
+        "sea_level": 1011,
+        "grnd_level": 997
+    },
+    "visibility": 9655,
+    "wind": {
+        "speed": 0.44,
+        "deg": 94,
+        "gust": 2.46
+    },
+    "rain": {
+        "1h": 0.67
+    },
+    "clouds": {
+        "all": 77
+    },
+    "dt": 1785201449,
+    "sys": {
+        "type": 2,
+        "id": 2020383,
+        "country": "BR",
+        "sunrise": 1785147154,
+        "sunset": 1785185355
+    },
+    "timezone": -10800,
+    "id": 3456068,
+    "name": "Novo Hamburgo",
+    "cod": 200
+}
