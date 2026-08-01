@@ -1,100 +1,87 @@
 # 🌦️ Airflow OpenWeather ETL (Home Lab de Dados)
 
 Home lab de dados focado em **consumo de API**: um pipeline ETL batch que extrai dados
-meteorológicos da [OpenWeather API](https://openweathermap.org/api), transforma com
-**pandas** e carrega em **PostgreSQL**, tudo orquestrado pelo **Apache Airflow** e
-conteinerizado com **Docker Compose**.
+meteorológicos da [OpenWeather API](https://openweathermap.org/api) para a cidade de
+Novo Hamburgo, transforma com **pandas** e carrega em **PostgreSQL**, tudo orquestrado
+pelo **Apache Airflow** e conteinerizado com **Docker Compose**.
 
-Diferente dos outros dois home labs desta série (que exploram processamento distribuído
-com Spark e streaming com Kafka), o objetivo aqui é outro: dominar o ciclo básico e mais
-comum de um pipeline de dados — **extrair de uma API REST externa, tratar com pandas e
-persistir em um banco relacional** — com boas práticas de idempotência, agendamento e
-tratamento de erros dentro do Airflow.
+Diferente dos outros home labs desta série (que exploram processamento distribuído com
+Spark e streaming com Kafka), o objetivo aqui é dominar o ciclo básico e mais comum de
+um pipeline de dados — **extrair de uma API REST externa, tratar com pandas e persistir
+em um banco relacional** — com boas práticas de agendamento e tratamento de erros
+dentro do Airflow.
 
 ---
 
 ## A ideia
 
-- **Extract** — uma task Python chama a API do OpenWeather (endpoint *Current Weather
-  Data*) para uma lista de cidades configurável e guarda a resposta bruta (JSON).
-- **Transform** — pandas normaliza os campos (temperatura, umidade, pressão, vento,
-  descrição do clima), converte unidades/timestamps e trata duplicidades.
-- **Load** — os dados tratados são gravados no PostgreSQL via `INSERT`/`UPSERT`,
-  particionados por cidade e timestamp de coleta.
-- **Orquestração** — uma DAG do Airflow roda em intervalos regulares (ex.: `@hourly`),
-  com `catchup` desligado e re-tentativas configuradas para lidar com instabilidade da
-  API externa (rate limit, timeout).
+- **Extract** (`src/extract_data.py`) — chama o endpoint *Current Weather Data* da
+  OpenWeather API para Novo Hamburgo e salva a resposta bruta em `data/weather_data.json`.
+- **Transform** (`src/transform_data.py`) — pandas normaliza os campos aninhados do JSON
+  (temperatura, vento, condição climática), remove colunas desnecessárias, renomeia e
+  ajusta timestamps (`sunrise`/`sunset`/`datetime`) para o fuso `America/Sao_Paulo`.
+- **Load** (`src/load_data.py`) — os dados tratados são gravados na tabela `nh_weather`
+  do PostgreSQL via SQLAlchemy (`append`).
+- **Orquestração** (`dags/weather_data.py`) — uma DAG do Airflow (`weather_data_dag`)
+  roda a cada hora (`0 */1 * * *`), com `catchup` desligado e 2 re-tentativas em caso de
+  falha, passando os dados entre as tasks via um parquet intermediário
+  (`data/temp_data.parquet`).
 
 ---
 
-## Arquitetura
-
-```mermaid
-flowchart LR
-    API["OpenWeather API<br/>(Current Weather Data)"]
-
-    subgraph AF["Airflow (orquestração)"]
-        T1["extract<br/>GET /weather por cidade"]
-        T2["transform<br/>pandas: normaliza e tipa"]
-        T3["load<br/>upsert no Postgres"]
-        T1 --> T2 --> T3
-    end
-
-    PG_RAW[("Postgres<br/>weather.raw_readings")]
-    PG_CUR[("Postgres<br/>weather.readings")]
-
-    API -->|"resposta JSON"| T1
-    T1 -->|"grava bruto"| PG_RAW
-    PG_RAW -->|"lê para tratar"| T2
-    T3 -->|"grava normalizado"| PG_CUR
-```
-
-### Serviços (containers)
+## Serviços (containers)
 
 | Serviço | Papel | Porta(s) |
 |---|---|---|
-| `airflow-webserver` / `airflow-scheduler` | Orquestração da DAG (LocalExecutor — sem necessidade de Celery/Redis, já que não há processamento distribuído) | 8080 (UI) |
-| `postgres_airflow` | Metadados do Airflow | — |
-| `postgres_weather` | Dados brutos e tratados da API (camadas `raw_readings` e `readings`) | 5432 |
-
-> Stack intencionalmente mais leve que os outros home labs: sem Spark (não há volume de
-> dados que justifique processamento distribuído) e sem MinIO (o dado final é
-> estruturado e cabe bem em um banco relacional).
+| `airflow-apiserver` / `airflow-scheduler` / `airflow-dag-processor` / `airflow-worker` / `airflow-triggerer` | Orquestração da DAG via **CeleryExecutor** | 8080 (UI) |
+| `postgres` | Metadados do Airflow | — (interno) |
+| `redis` | Broker do Celery | — (interno) |
+| `postgresql-data` | Dados da coleta de clima (tabela `nh_weather`) | 5432 |
 
 ---
 
 ## Modelo de dados
 
-Cada leitura de clima coletada da API é normalizada para os seguintes campos:
+Tabela `nh_weather` (definida em `config/init_db.sql`), com uma linha por coleta:
 
 | Campo | Descrição |
 |---|---|
-| `city` / `country` | Cidade e país consultados |
-| `lat` / `lon` | Coordenadas geográficas |
-| `collected_at` | Timestamp UTC da coleta (chave de deduplicação junto com `city`) |
-| `temp` / `feels_like` / `temp_min` / `temp_max` | Temperaturas (°C) |
+| `city_id` / `city_name` / `country` | Identificação da cidade e país |
+| `longitude` / `latitude` | Coordenadas geográficas |
+| `datetime` | Timestamp UTC da coleta |
+| `temperature` / `feels_like` / `temp_min` / `temp_max` | Temperaturas (°C) |
 | `pressure` / `humidity` | Pressão (hPa) e umidade (%) |
-| `wind_speed` / `wind_deg` | Velocidade (m/s) e direção do vento |
+| `wind_speed` / `wind_deg` / `wind_gust` | Velocidade, direção e rajada do vento |
+| `rain_1h` | Volume de chuva na última hora (mm) |
 | `clouds` | Cobertura de nuvens (%) |
-| `weather_main` / `weather_description` | Condição climática (ex.: `Rain`, "chuva leve") |
-| `sunrise` / `sunset` | Horários do nascer/pôr do sol (UTC) |
+| `weather_id` / `weather_main` / `weather_description` | Condição climática |
+| `sunrise` / `sunset` | Horários do nascer/pôr do sol |
 
 ---
 
-## Estrutura (planejada)
+## Estrutura
 
 ```
 .
-├── dags/                # DAGs do Airflow (extract → transform → load)
-│   └── sql/             # DDL das tabelas raw_readings / readings
-├── etl/                 # Módulos Python (client da API, transformações pandas)
-├── docker/              # Dockerfile do Airflow + docker-compose.yml
-├── .env.example         # Template de variáveis de ambiente (API key, credenciais)
-└── tests/               # Testes das transformações
+├── config/
+│   ├── .env             # Variáveis de ambiente (API key, credenciais Postgres) — não versionado
+│   └── init_db.sql      # DDL da tabela nh_weather
+├── dags/
+│   └── weather_data.py  # DAG do Airflow (extract → transform → load)
+├── docker/
+│   └── docker-compose.yaml
+├── notebooks/
+│   └── analysis_data.ipynb  # Exploração dos dados da API
+├── src/
+│   ├── extract_data.py
+│   ├── transform_data.py
+│   └── load_data.py
+└── requirements.txt
 ```
 
 ---
 
 ## Stack
 
-`Apache Airflow` · `Python` · `pandas` · `PostgreSQL` · `Docker Compose` · `OpenWeather API`
+`Apache Airflow` (CeleryExecutor) · `Python` · `pandas` · `PostgreSQL` · `Redis` ·
+`Docker Compose` · `OpenWeather API`
