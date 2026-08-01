@@ -1,6 +1,10 @@
 anotacao.txt
 venv
 config/.env
+config/airflow.cfg
 data/*.json
+data/*.parquet
+logs/
 __pycache__/
 *.pyc
+main.py
