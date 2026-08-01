@@ -49,7 +49,7 @@ def create_dataframe(path_name:str) -> pd.DataFrame:
     path = path_name
 
     if not path.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado {path}")
+        raise FileNotFoundError("Arquivo não encontrado: " + path)
 
     with open(path) as f:
         data = json.load(f)
@@ -72,6 +72,10 @@ def normalize_weather_columns(df:pd.DataFrame) -> pd.DataFrame:
     )
 
     df = pd.concat([df, df_weather], axis=1) # Concatenar colunas (axis=1)
+
+    df = df.rename(columns={
+        "rain.1h":"rain_1h"
+    })
 
     logging.info("Coluna weather normalizada")
 
